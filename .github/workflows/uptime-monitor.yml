@@ -1,0 +1,65 @@
+name: Uptime monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Optional URL override for this run"
+        required: false
+        type: string
+  schedule:
+    - cron: "*/10 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve target URL
+        shell: bash
+        run: |
+          URL="${{ inputs.url }}"
+
+          if [ -z "$URL" ]; then
+            URL="${{ vars.UPTIME_URL }}"
+          fi
+
+          if [ -z "$URL" ]; then
+            URL="${{ secrets.UPTIME_URL }}"
+          fi
+
+          if [ -z "$URL" ]; then
+            echo "::error::No uptime URL configured."
+            echo "::error::Set repository variable UPTIME_URL (or secret UPTIME_URL), or pass workflow_dispatch input 'url'."
+            exit 1
+          fi
+
+          echo "UPTIME_URL=$URL" >> "$GITHUB_ENV"
+
+      - name: Check uptime endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          status_code="$(curl \
+            --silent \
+            --show-error \
+            --location \
+            --max-time 20 \
+            --retry 2 \
+            --retry-delay 3 \
+            --output /tmp/uptime_response.txt \
+            --write-out "%{http_code}" \
+            "$UPTIME_URL")"
+
+          if [ "$status_code" -ge 400 ] || [ "$status_code" -lt 200 ]; then
+            echo "::error::Uptime check failed for $UPTIME_URL (HTTP $status_code)."
+            echo "----- response (first 40 lines) -----"
+            sed -n '1,40p' /tmp/uptime_response.txt || true
+            exit 1
+          fi
+
+          echo "Uptime OK for $UPTIME_URL (HTTP $status_code)."
